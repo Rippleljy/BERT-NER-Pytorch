@@ -37,6 +37,8 @@ def get_argparse():
                         help="Whether to run eval on the dev set.")
     parser.add_argument("--do_predict", action="store_true",
                         help="Whether to run predictions on the test set.")
+    parser.add_argument("--data_type", default='test', type=str,
+                        help="entities recognize or test: predic/test")
     parser.add_argument("--evaluate_during_training", action="store_true",
                         help="Whether to run evaluation during training at each logging step.", )
     parser.add_argument("--do_lower_case", action="store_true",

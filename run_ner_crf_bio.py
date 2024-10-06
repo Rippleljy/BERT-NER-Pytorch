@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
-from callback.optimizater.adamw import AdamW
+from torch.optim import AdamW
 from callback.lr_scheduler import get_linear_schedule_with_warmup
 from callback.progressbar import ProgressBar
 from tools.common import seed_everything,json_to_text
@@ -17,11 +17,12 @@ from tools.common import init_logger, logger
 from transformers import WEIGHTS_NAME, BertConfig,get_linear_schedule_with_warmup,AdamW, BertTokenizer
 from models.bert_for_ner import BertCrfForNer
 from processors.utils_ner import get_entities
-from processors.ner_seq import convert_examples_to_features
-from processors.ner_seq import ner_processors as processors
-from processors.ner_seq import collate_fn
+from processors.ner_seq_bio import convert_examples_to_features
+from processors.ner_seq_bio import ner_processors as processors
+from processors.ner_seq_bio import collate_fn
 from metrics.ner_metrics import SeqEntityScore
 from tools.finetuning_argparse import get_argparse
+from tools.conlleval import evaluate_conll_file
 
 MODEL_CLASSES = {
     ## bert ernie bert_wwm bert_wwwm_ext
@@ -247,11 +248,11 @@ def evaluate(args, model, tokenizer, prefix=""):
     return results
 
 
-def predict(args, model, tokenizer, prefix=""):
+def predict(args, model, tokenizer, prefix="", data_type='test'):
     pred_output_dir = args.output_dir
     if not os.path.exists(pred_output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(pred_output_dir)
-    test_dataset = load_and_cache_examples(args, args.task_name, tokenizer, data_type='test')
+    test_dataset = load_and_cache_examples(args, args.task_name, tokenizer, data_type=data_type)
     # Note that DistributedSampler samples randomly
     test_sampler = SequentialSampler(test_dataset) if args.local_rank == -1 else DistributedSampler(test_dataset)
     test_dataloader = DataLoader(test_dataset, sampler=test_sampler, batch_size=1, collate_fn=collate_fn)
@@ -260,14 +261,19 @@ def predict(args, model, tokenizer, prefix=""):
     logger.info("  Num examples = %d", len(test_dataset))
     logger.info("  Batch size = %d", 1)
     results = []
-    output_predict_file = os.path.join(pred_output_dir, prefix, "test_prediction.json")
+    # txt格式的结果，每一行格式：token-标注Tag-预测Tag，如： 设 B-ORG I-ORG,[UNK] O O
+    txt_result=[]
+    # txt格式结果， token-预测Tag: [UNK] O
+    new_test=[]
+    output_predict_file = os.path.join(pred_output_dir, prefix, "test_prediction.json")    #tokenizer.save_vocabulary(output_vab)
     pbar = ProgressBar(n_total=len(test_dataloader), desc="Predicting")
-
     if isinstance(model, nn.DataParallel):
         model = model.module
     for step, batch in enumerate(test_dataloader):
+
         model.eval()
         batch = tuple(t.to(args.device) for t in batch)
+
         with torch.no_grad():
             inputs = {"input_ids": batch[0], "attention_mask": batch[1], "labels": None}
             if args.model_type != "distilbert":
@@ -276,19 +282,43 @@ def predict(args, model, tokenizer, prefix=""):
             outputs = model(**inputs)
             logits = outputs[0]
             tags = model.crf.decode(logits, inputs['attention_mask'])
-            tags  = tags.squeeze(0).cpu().numpy().tolist()
+            tags = tags.squeeze(0).cpu().numpy().tolist()
         preds = tags[0][1:-1]  # [CLS]XXXX[SEP]
         label_entities = get_entities(preds, args.id2label, args.markup)
+
         json_d = {}
         json_d['id'] = step
         json_d['tag_seq'] = " ".join([args.id2label[x] for x in preds])
         json_d['entities'] = label_entities
         results.append(json_d)
+        # txt格式
+        sents = batch[0].squeeze(0).cpu().numpy().tolist()[1: -1]
+        initailTags = batch[3].squeeze(0).cpu().numpy().tolist()[1: -1]
+        for sentId,tagId,preId in zip(sents, initailTags, preds):
+            new_test.append(' '.join([tokenizer.ids_to_tokens[sentId], args.id2label[preId]]) + '\n')
+            txt_result.append(' '.join([tokenizer.ids_to_tokens[sentId], args.id2label[tagId], args.id2label[preId]]) + '\n')
         pbar(step)
     logger.info("\n")
     with open(output_predict_file, "w") as writer:
         for record in results:
             writer.write(json.dumps(record) + '\n')
+    # todo:ljy txt 文件
+    time_ = time.strftime("%Y-%m-%d", time.localtime())
+    resultFile = os.path.join(pred_output_dir, prefix, time_+"result.txt")
+    with open(resultFile, "w", encoding="utf-8-sig") as txtwriter:
+        for res in txt_result:
+            txtwriter.write(res)
+        txtwriter.write('\n')
+    f = open(resultFile,"r", encoding="utf-8-sig")
+    evaluate_conll_file(f)
+
+    compareFile = os.path.join(pred_output_dir, prefix, time_+"compare.txt")
+    with open(compareFile, "w", encoding="utf-8-sig") as compareWriter:
+        for res in new_test:
+            compareWriter.write(res)
+        compareWriter.write('\n')
+
+
     if args.task_name == 'cluener':
         output_submit_file = os.path.join(pred_output_dir, prefix, "test_submit.json")
         test_text = []
@@ -319,6 +349,7 @@ def predict(args, model, tokenizer, prefix=""):
             test_submit.append(json_d)
         json_to_text(output_submit_file,test_submit)
 
+
 def load_and_cache_examples(args, task, tokenizer, data_type='train'):
     if args.local_rank not in [-1, 0] and not evaluate:
         torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
@@ -339,6 +370,8 @@ def load_and_cache_examples(args, task, tokenizer, data_type='train'):
             examples = processor.get_train_examples(args.data_dir)
         elif data_type == 'dev':
             examples = processor.get_dev_examples(args.data_dir)
+        elif data_type == "predic":
+            examples=processor.get_predict_examples(args.data_dir,data_type)
         else:
             examples = processor.get_test_examples(args.data_dir)
         features = convert_examples_to_features(examples=examples,
@@ -368,7 +401,6 @@ def load_and_cache_examples(args, task, tokenizer, data_type='train'):
     all_lens = torch.tensor([f.input_len for f in features], dtype=torch.long)
     dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_lens, all_label_ids)
     return dataset
-
 
 def main():
     args = get_argparse().parse_args()
@@ -490,7 +522,8 @@ def main():
             prefix = checkpoint.split('/')[-1] if checkpoint.find('checkpoint') != -1 else ""
             model = model_class.from_pretrained(checkpoint, config=config)
             model.to(args.device)
-            predict(args, model, tokenizer, prefix=prefix)
+            predict(args, model, tokenizer, prefix=prefix, data_type=args.data_type)
+
 
 
 if __name__ == "__main__":

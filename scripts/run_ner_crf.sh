@@ -10,6 +10,7 @@ python run_ner_crf.py \
   --task_name=$TASK_NAME \
   --do_train \
   --do_eval \
+  --do_pre\
   --do_lower_case \
   --data_dir=$DATA_DIR/${TASK_NAME}/ \
   --train_max_seq_length=128 \
