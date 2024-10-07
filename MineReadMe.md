@@ -1,12 +1,10 @@
-
-
 21:39 从训练营的分享中学习
 https://github.com/lonePatient/BERT-NER-Pytorch
 bert：google-bert/bert-base-chinese
 
 2024/07/29 
 新增ner_seq_bio.py 针对bio做特殊处理
-参数
+train 参数
 --task_name=cner
 --data_dir=./datasets/cner
 --model_type=bert
@@ -18,13 +16,14 @@ bert：google-bert/bert-base-chinese
 7/30
 test（predict)
 --task_name=cner
---data_dir=./datasets/cner1
+--data_dir=./datasets/cner
 --model_type=bert
 --model_name_or_path=google-bert/bert-base-chinese
 --output_dir=./result/
 --do_predict
 --overwrite_output_dir
 --markup=bio
+
 生成result文件用于评估
 
 
@@ -107,3 +106,20 @@ git@github.com:liucongg/NLPDataSet.git
 
 
 8/27 去掉数据抽取方式
+
+10/7
+从头开始，
+Train：训练集 8:2
+  ***** Eval results  *****
+10/07/2024 12:01:25 - INFO - root -    acc: 0.9167 - recall: 0.9247 - f1: 0.9207 - loss: 5.0209 
+10/07/2024 12:01:25 - INFO - root -   ***** Entity results  *****
+10/07/2024 12:01:25 - INFO - root -   ******* DATE results ********
+10/07/2024 12:01:25 - INFO - root -    acc: 0.8858 - recall: 0.9078 - f1: 0.8967 
+10/07/2024 12:01:25 - INFO - root -   ******* LOC results ********
+10/07/2024 12:01:25 - INFO - root -    acc: 0.8949 - recall: 0.9079 - f1: 0.9013 
+10/07/2024 12:01:25 - INFO - root -   ******* ORG results ********
+10/07/2024 12:01:25 - INFO - root -    acc: 0.8973 - recall: 0.9055 - f1: 0.9014 
+10/07/2024 12:01:25 - INFO - root -   ******* PER results ********
+10/07/2024 12:01:25 - INFO - root -    acc: 0.9856 - recall: 0.9818 - f1: 0.9837 
+
+predict:
